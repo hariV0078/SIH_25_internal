@@ -2,6 +2,7 @@ from fastapi import FastAPI, UploadFile, File, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, JSONResponse, PlainTextResponse
 from pydantic import BaseModel
+from typing import List
 import uvicorn
 import tempfile
 import os
@@ -11,7 +12,7 @@ from dotenv import load_dotenv
 
 # Local imports
 from blur import detect_faces, detect_number_plates, blur_regions, check_infrastructure_issues
-from map import fetch_important_places, recommend_important_places
+from map import fetch_important_places, recommend_important_places, prioritize_problems
 
 load_dotenv()
 
@@ -25,15 +26,20 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Pydantic model for JSON request body
+# Pydantic models
 class LocationRequest(BaseModel):
     lat: float
     lng: float
     radius: int = 2500  # Default radius in meters
 
+class ProblemLocation(BaseModel):
+    lat: float
+    lng: float
+    problem: str
+
 @app.get("/", response_class=PlainTextResponse)
 def root():
-    return "SIH_25 API is running. Endpoints: /blur, /places, /places/markdown"
+    return "SIH_25 API is running. Endpoints: /blur, /places, /places/markdown, /prioritize-problems"
 
 @app.post("/blur")
 async def blur_sensitive_regions_and_detect_issues(file: UploadFile = File(...)):
@@ -253,6 +259,47 @@ def get_places_markdown(request: LocationRequest):
         return PlainTextResponse(content=table)
     except Exception as e:
         print(f"Error in places/markdown endpoint: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/prioritize-problems")
+def prioritize_problems_endpoint(problems: List[ProblemLocation]):
+    """
+    Prioritize problems based on location and nearby important places.
+    Expected JSON format:
+    [
+        {
+            "lat": 12.9716,
+            "lng": 77.5946,
+            "problem": "fallen tree"
+        },
+        {
+            "lat": 13.0827,
+            "lng": 80.2707,
+            "problem": "pothole"
+        }
+    ]
+    """
+    try:
+        # Convert problems to list of dictionaries for the prioritization function
+        problem_list = [
+            {
+                "lat": problem.lat,
+                "lng": problem.lng,
+                "problem": problem.problem
+            }
+            for problem in problems
+        ]
+        
+        prioritized_problems = prioritize_problems(problem_list)
+        
+        return JSONResponse(content={
+            "success": True,
+            "total_problems": len(problems),
+            "prioritized_problems": prioritized_problems,
+            "message": "Problems prioritized successfully based on proximity to important places and urgency"
+        })
+    except Exception as e:
+        print(f"Error in prioritize-problems endpoint: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
